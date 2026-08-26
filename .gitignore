@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+trip-planner-env/
+env/
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Env / secrets
+.env
+.env.*
+.streamlit/secrets.toml
+
+# Runtime data
+data/app_state.json
+data/feedback.jsonl
+!data/.gitkeep
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+
+# Cursor local
+.cursor/
