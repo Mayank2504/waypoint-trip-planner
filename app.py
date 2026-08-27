@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import date
 from pathlib import Path
 
 import streamlit as st
@@ -19,7 +20,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from ui.itinerary import render_before_after, render_itinerary
-from ui.map import itinerary_paths, itinerary_points, render_map
+from ui.map import itinerary_paths, itinerary_points, render_map, routed_paths
 from ui.sidebar import render_sidebar
 from ui.trace import append_trace, render_trace, reset_trace
 from waypoint.agent.loop import repair_itinerary_json, run_trip_agent
@@ -29,13 +30,17 @@ from waypoint.export.pdf import build_itinerary_pdf
 from waypoint.feedback import append_feedback, feedback_stats
 from waypoint.osm.tags import ALL_INTERESTS
 from waypoint.persistence import ensure_data_dir, load_app_state, save_app_state
+from waypoint.routing import route_itinerary, route_warnings
 from waypoint.schemas import parse_itinerary
+from waypoint.weather import fetch_daily_forecast
 from waypoint.validate import (
     extract_json_object,
     find_duplicate_poi_ids,
     other_days_unchanged,
+    validate_day_count,
     validate_itinerary_poi_ids,
     validate_plan_inputs,
+    validate_source_ids,
 )
 
 
@@ -54,8 +59,14 @@ def _init_state() -> None:
         return
     st.session_state["itinerary"] = saved["itinerary"]
     st.session_state["allowed_pois"] = saved["allowed_pois"]
+    st.session_state["allowed_chunks"] = saved.get("allowed_chunks") or {}
     st.session_state["center"] = saved.get("center") or {}
     st.session_state["city_key"] = saved.get("city_key") or ""
+    if saved.get("start_date"):
+        try:
+            st.session_state["start_date_input"] = date.fromisoformat(saved["start_date"])
+        except (TypeError, ValueError):
+            pass
 
 
 def get_openai_client() -> OpenAI:
@@ -63,7 +74,8 @@ def get_openai_client() -> OpenAI:
     if not key:
         st.error("Enter your OpenAI API key in the sidebar.")
         st.stop()
-    return OpenAI(api_key=key)
+    # Keep each model call below the agent's overall 90-second budget.
+    return OpenAI(api_key=key, timeout=30.0, max_retries=0)
 
 
 def explain_agent_error(error: Exception) -> str:
@@ -89,12 +101,15 @@ def maybe_clear_key() -> None:
 
 
 def persist_current() -> None:
+    selected_date = st.session_state.get("start_date_input")
     save_app_state(
         {
             "itinerary": st.session_state.get("itinerary"),
             "allowed_pois": st.session_state.get("allowed_pois"),
+            "allowed_chunks": st.session_state.get("allowed_chunks"),
             "center": st.session_state.get("center"),
             "city_key": st.session_state.get("city_key"),
+            "start_date": selected_date.isoformat() if hasattr(selected_date, "isoformat") else selected_date,
         },
         enabled=st.session_state.get("autosave_enabled", True),
     )
@@ -105,18 +120,42 @@ def apply_itinerary(itin: dict, allowed: dict, tool_state: dict, *, keep_prev: b
         st.session_state["itinerary_prev"] = st.session_state["itinerary"]
     st.session_state["itinerary"] = itin
     st.session_state["allowed_pois"] = allowed
+    previous_chunks = st.session_state.get("allowed_chunks") or {}
+    st.session_state["allowed_chunks"] = {
+        **previous_chunks,
+        **(tool_state.get("chunks") or {}),
+    }
     st.session_state["center"] = tool_state.get("center") or st.session_state.get("center") or {}
     st.session_state["city_key"] = tool_state.get("city_key") or st.session_state.get("city_key") or ""
+    st.session_state.pop("_route_signature", None)
+    st.session_state.pop("routes", None)
+    st.session_state.pop("_weather_signature", None)
+    st.session_state.pop("weather", None)
     persist_current()
 
 
-def parse_and_validate(raw: str, allowed: dict) -> dict:
+def parse_and_validate(
+    raw: str,
+    allowed: dict,
+    *,
+    expected_days: int,
+    allowed_chunks: dict,
+) -> dict:
     data = extract_json_object(raw)
     itin_model = parse_itinerary(data)
     itin = itin_model.to_dict()
     bad = validate_itinerary_poi_ids(itin, allowed)
     if bad:
         raise ValueError(f"Itinerary referenced unknown poi_id(s): {bad}")
+    day_errors = validate_day_count(itin, expected_days)
+    if day_errors:
+        raise ValueError(" ".join(day_errors))
+    unknown_sources = validate_source_ids(itin, allowed_chunks)
+    if unknown_sources:
+        raise ValueError(f"Itinerary referenced unknown RAG source chunk(s): {unknown_sources}")
+    duplicates = find_duplicate_poi_ids(itin)
+    if duplicates:
+        raise ValueError(f"Itinerary repeated POI(s): {duplicates}")
     if not allowed:
         raise ValueError("No POIs were returned by tools. The model may not have called search_pois.")
     return itin
@@ -137,6 +176,7 @@ colA, colB = st.columns(2)
 with colA:
     city = st.text_input("Destination city", value="Santa Fe, NM", key="city_input")
     days = st.slider("Trip length (days)", 1, 7, 3, key="days_input")
+    start_date = st.date_input("Trip start date", value=date.today(), key="start_date_input")
     pace = st.selectbox("Pace", ["relaxed", "balanced", "packed"], index=1, key="pace_input")
     radius_km = st.slider("POI search radius (km)", 1, 30, 8, key="radius_input")
 with colB:
@@ -213,9 +253,6 @@ if generate_clicked:
         if status is not None:
             status.update(label="Done", state="complete")
 
-    if settings["show_trace"]:
-        render_trace()
-
     try:
         allowed = dict(tool_state.get("pois", {}))
         if not allowed:
@@ -229,18 +266,25 @@ if generate_clicked:
                 st.code(raw or "(empty)")
             st.stop()
         try:
-            itin = parse_and_validate(raw, allowed)
+            itin = parse_and_validate(
+                raw,
+                allowed,
+                expected_days=days,
+                allowed_chunks=tool_state.get("chunks") or {},
+            )
         except Exception as parse_err:
             if status is not None:
                 status.write("Repairing itinerary JSON…")
             try:
                 raw = repair_itinerary_json(client, settings["model"], raw or "")
-                itin = parse_and_validate(raw, allowed)
+                itin = parse_and_validate(
+                    raw,
+                    allowed,
+                    expected_days=days,
+                    allowed_chunks=tool_state.get("chunks") or {},
+                )
             except Exception:
                 raise parse_err
-        dups = find_duplicate_poi_ids(itin)
-        if dups:
-            st.warning(f"Duplicate POIs in itinerary (allowed, but less ideal): {dups}")
         apply_itinerary(itin, allowed, tool_state, keep_prev=False)
         st.success("Itinerary saved.")
     except Exception as e:
@@ -254,9 +298,66 @@ allowed = st.session_state.get("allowed_pois") or {}
 center = st.session_state.get("center") or {}
 
 if itin and allowed:
+    routes: dict = {}
+    if settings["routing_enabled"]:
+        route_signature = json.dumps(
+            {"itinerary": itin, "allowed_pois": allowed},
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        if st.session_state.get("_route_signature") != route_signature:
+            with st.spinner("Calculating walking routes…"):
+                st.session_state["routes"] = route_itinerary(
+                    itin,
+                    allowed,
+                    settings["user_agent"],
+                    mode="foot",
+                )
+            st.session_state["_route_signature"] = route_signature
+        routes = st.session_state.get("routes") or {}
+
+    weather: dict = {}
+    if (
+        settings["weather_enabled"]
+        and center.get("lat") is not None
+        and center.get("lon") is not None
+    ):
+        selected_date = st.session_state.get("start_date_input") or date.today()
+        weather_signature = (
+            round(float(center["lat"]), 3),
+            round(float(center["lon"]), 3),
+            selected_date.isoformat(),
+            len(itin.get("days") or []),
+        )
+        if st.session_state.get("_weather_signature") != weather_signature:
+            with st.spinner("Loading daily weather…"):
+                st.session_state["weather"] = fetch_daily_forecast(
+                    float(center["lat"]),
+                    float(center["lon"]),
+                    selected_date,
+                    len(itin.get("days") or []),
+                )
+            st.session_state["_weather_signature"] = weather_signature
+        weather = st.session_state.get("weather") or {}
+
     st.divider()
     st.header("Itinerary")
-    render_itinerary(itin, allowed)
+    render_itinerary(
+        itin,
+        allowed,
+        routes=routes,
+        weather=weather,
+        start_date=(st.session_state.get("start_date_input") or date.today()).isoformat(),
+    )
+    for warning in route_warnings(routes, st.session_state.get("pace_input", "balanced")):
+        st.warning(warning)
+    if weather:
+        st.caption(
+            f"Weather data by [Open-Meteo.com](https://open-meteo.com/) · "
+            f"Timezone: {weather.get('timezone') or 'unavailable'}"
+        )
+    if st.session_state.get("itinerary_prev"):
+        render_before_after(st.session_state["itinerary_prev"], itin)
 
     st.subheader("Map")
     day_options = ["All"] + [d.get("day") for d in itin.get("days", []) if d.get("day") is not None]
@@ -265,7 +366,10 @@ if itin and allowed:
     day_filter = st.selectbox("Show day", options=day_options, index=0, key="map_day_filter")
     df = None if day_filter == "All" else int(day_filter)
     pts = itinerary_points(itin, allowed, df)
-    paths = itinerary_paths(itin, allowed, df)
+    fallback_paths = itinerary_paths(itin, allowed, df)
+    osrm_paths = routed_paths(routes, df)
+    routed_days = {path["day"] for path in osrm_paths}
+    paths = osrm_paths + [path for path in fallback_paths if path["day"] not in routed_days]
     render_map(pts, paths, center, dark=settings["dark_map"])
 
     d1, d2 = st.columns(2)
@@ -342,16 +446,33 @@ if itin and allowed:
                 if status is not None:
                     status.update(label="Done", state="complete")
 
-            if settings["show_trace"]:
-                render_trace()
             try:
                 merged = dict(allowed)
                 merged.update(tool_state2.get("pois", {}))
-                itin2 = parse_and_validate(raw2, merged)
+                chunks2 = {
+                    **(st.session_state.get("allowed_chunks") or {}),
+                    **(tool_state2.get("chunks") or {}),
+                }
+                try:
+                    itin2 = parse_and_validate(
+                        raw2,
+                        merged,
+                        expected_days=len(itin.get("days") or []),
+                        allowed_chunks=chunks2,
+                    )
+                except Exception as parse_err:
+                    try:
+                        raw2 = repair_itinerary_json(client, settings["model"], raw2 or "")
+                        itin2 = parse_and_validate(
+                            raw2,
+                            merged,
+                            expected_days=len(itin.get("days") or []),
+                            allowed_chunks=chunks2,
+                        )
+                    except Exception:
+                        raise parse_err
                 apply_itinerary(itin2, merged, tool_state2)
                 st.success("Itinerary updated.")
-                if st.session_state.get("itinerary_prev"):
-                    render_before_after(st.session_state["itinerary_prev"], itin2)
                 st.rerun()
             except Exception as e:
                 st.error(f"Could not parse/validate refined JSON: {e}")
@@ -406,20 +527,37 @@ if itin and allowed:
                     if status is not None:
                         status.update(label="Done", state="complete")
 
-                if settings["show_trace"]:
-                    render_trace()
                 try:
                     merged = dict(allowed)
                     merged.update(tool_state3.get("pois", {}))
-                    itin3 = parse_and_validate(raw3, merged)
+                    chunks3 = {
+                        **(st.session_state.get("allowed_chunks") or {}),
+                        **(tool_state3.get("chunks") or {}),
+                    }
+                    try:
+                        itin3 = parse_and_validate(
+                            raw3,
+                            merged,
+                            expected_days=len(itin.get("days") or []),
+                            allowed_chunks=chunks3,
+                        )
+                    except Exception as parse_err:
+                        try:
+                            raw3 = repair_itinerary_json(client, settings["model"], raw3 or "")
+                            itin3 = parse_and_validate(
+                                raw3,
+                                merged,
+                                expected_days=len(itin.get("days") or []),
+                                allowed_chunks=chunks3,
+                            )
+                        except Exception:
+                            raise parse_err
                     ok, changed = other_days_unchanged(itin, itin3, target_day=int(target_day))
                     if not ok:
                         st.error(f"Model changed other day(s): {changed}. Not applying.")
                         st.stop()
                     apply_itinerary(itin3, merged, tool_state3)
                     st.success(f"Updated Day {target_day}.")
-                    if st.session_state.get("itinerary_prev"):
-                        render_before_after(st.session_state["itinerary_prev"], itin3)
                     st.rerun()
                 except Exception as e:
                     st.error(f"Could not parse/validate day-regenerated JSON: {e}")
@@ -472,3 +610,6 @@ if itin and allowed:
 
 else:
     st.info("No saved itinerary yet. Fill in the form above and click **Generate itinerary**.")
+
+if settings["show_trace"] and st.session_state.get("trace"):
+    render_trace()

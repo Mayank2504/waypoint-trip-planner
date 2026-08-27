@@ -7,18 +7,35 @@ from collections import Counter
 from typing import Any, Dict, List, Optional
 
 from waypoint.config import DOWNVOTE_BOOST, FEEDBACK_PATH, UPVOTE_BOOST
-from waypoint.persistence import ensure_data_dir
+from waypoint.persistence import ensure_data_dir, is_cloud_runtime
+
+
+def _cloud_events() -> List[Dict[str, Any]]:
+    """Keep Cloud feedback isolated in the current Streamlit session."""
+    try:
+        import streamlit as st
+
+        return st.session_state.setdefault("_feedback_events", [])
+    except Exception:
+        return []
 
 
 def append_feedback(event: Dict[str, Any]) -> None:
-    ensure_data_dir()
     payload = dict(event)
     payload.setdefault("ts", time.time())
+    if payload.get("vote") not in {"up", "down"} or not payload.get("poi_id"):
+        raise ValueError("Feedback requires a POI and an up/down vote.")
+    if is_cloud_runtime():
+        _cloud_events().append(payload)
+        return
+    ensure_data_dir()
     with FEEDBACK_PATH.open("a", encoding="utf-8") as f:
         f.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
 def _iter_events() -> List[Dict[str, Any]]:
+    if is_cloud_runtime():
+        return list(_cloud_events())
     if not FEEDBACK_PATH.exists():
         return []
     events: List[Dict[str, Any]] = []

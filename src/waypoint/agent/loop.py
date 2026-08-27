@@ -139,14 +139,19 @@ def run_trip_agent(
     rag_enabled: bool,
     on_trace: Optional[TraceCallback] = None,
     on_status: Optional[Callable[[str], None]] = None,
+    total_timeout_s: float = 90.0,
 ) -> Tuple[str, Dict[str, Any]]:
     # store=False: do not persist chats on OpenAI. That means we must resend
     # the full input list (not previous_response_id).
     input_items: List[Any] = [{"role": "user", "content": user_prompt}]
     tool_state: Dict[str, Any] = {"pois": {}, "chunks": {}, "center": {}}
     current_model = model
+    started = time.monotonic()
+    deadline = started + total_timeout_s
 
     for step in range(1, max_steps + 1):
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"Agent exceeded its {int(total_timeout_s)}s deadline.")
         if on_trace:
             on_trace({"kind": "model_call", "step": step, "ts": time.time()})
         if on_status:
@@ -158,6 +163,14 @@ def run_trip_agent(
             "input": input_items,
             "store": False,
             "parallel_tool_calls": False,
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "itinerary",
+                    "strict": True,
+                    "schema": ITINERARY_JSON_SCHEMA,
+                }
+            },
         }
         if step == 1:
             kwargs["tool_choice"] = {"type": "function", "name": "search_pois"}
@@ -165,6 +178,7 @@ def run_trip_agent(
             kwargs["tool_choice"] = "auto"
 
         try:
+            model_started = time.monotonic()
             resp = _create_response(client, **kwargs)
         except Exception as e:
             msg = str(e).lower()
@@ -184,11 +198,28 @@ def run_trip_agent(
                 resp = _create_response(client, **kwargs)
             else:
                 raise
+        if on_trace:
+            on_trace(
+                {
+                    "kind": "model_result",
+                    "step": step,
+                    "elapsed_s": round(time.monotonic() - model_started, 3),
+                    "ts": time.time(),
+                }
+            )
 
         input_items.extend(_to_input_item(it) for it in resp.output)
 
         tool_calls = [it for it in resp.output if _item_get(it, "type") == "function_call"]
         if not tool_calls:
+            if on_trace:
+                on_trace(
+                    {
+                        "kind": "run_complete",
+                        "elapsed_s": round(time.monotonic() - started, 3),
+                        "ts": time.time(),
+                    }
+                )
             return _output_text(resp), tool_state
 
         for tc in tool_calls:
@@ -197,16 +228,29 @@ def run_trip_agent(
                 on_status(f"Tool: {name}")
             try:
                 args = json.loads(_item_get(tc, "arguments") or "{}")
-            except Exception:
-                args = {}
-            output_str = call_tool(
-                name,
-                args,
-                user_agent=user_agent,
-                tool_state=tool_state,
-                rag_enabled=rag_enabled,
-                on_trace=on_trace,
-            )
+            except Exception as exc:
+                if on_trace:
+                    on_trace(
+                        {
+                            "kind": "tool_error",
+                            "name": name,
+                            "error": f"Invalid tool arguments: {exc}",
+                            "elapsed_s": 0,
+                            "ts": time.time(),
+                        }
+                    )
+                output_str = json.dumps({"error": "Invalid JSON tool arguments."})
+            else:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"Agent exceeded its {int(total_timeout_s)}s deadline.")
+                output_str = call_tool(
+                    name,
+                    args,
+                    user_agent=user_agent,
+                    tool_state=tool_state,
+                    rag_enabled=rag_enabled,
+                    on_trace=on_trace,
+                )
             input_items.append(
                 {
                     "type": "function_call_output",

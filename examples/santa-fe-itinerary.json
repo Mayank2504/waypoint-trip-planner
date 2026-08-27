@@ -1,0 +1,75 @@
+{
+  "title": "3-Day Balanced Santa Fe Food and Outdoors Experience",
+  "city": "Santa Fe, NM",
+  "days": [
+    {
+      "day": 1,
+      "morning": [
+        {
+          "poi_id": "osm_node_6392062211",
+          "why": "Start with a relaxed hill walk and a panoramic view over Santa Fe."
+        }
+      ],
+      "afternoon": [
+        {
+          "poi_id": "osm_node_3163223005",
+          "why": "Pause for a classic local lunch near the historic plaza."
+        }
+      ],
+      "evening": [
+        {
+          "poi_id": "osm_node_4582137023",
+          "why": "Finish with Southwestern flavors in the walkable downtown area."
+        }
+      ],
+      "notes": "A geographically compact first day with an outdoor highlight and local food.",
+      "sources": []
+    },
+    {
+      "day": 2,
+      "morning": [
+        {
+          "poi_id": "osm_node_357622069",
+          "why": "Enjoy a quieter neighborhood park at a relaxed pace."
+        }
+      ],
+      "afternoon": [
+        {
+          "poi_id": "osm_node_4032210935",
+          "why": "Try a well-known local cafe with regional dishes."
+        }
+      ],
+      "evening": [
+        {
+          "poi_id": "osm_node_4743015987",
+          "why": "Choose a historic setting for an unhurried dinner."
+        }
+      ],
+      "notes": "A calm outdoor morning followed by two distinctive dining stops.",
+      "sources": []
+    },
+    {
+      "day": 3,
+      "morning": [
+        {
+          "poi_id": "osm_node_4691597021",
+          "why": "Begin with coffee and a locally made pastry."
+        }
+      ],
+      "afternoon": [
+        {
+          "poi_id": "osm_node_6594202399",
+          "why": "Take a short break in a small urban green space."
+        }
+      ],
+      "evening": [
+        {
+          "poi_id": "osm_node_4743112847",
+          "why": "End the trip with a cozy dinner close to the city center."
+        }
+      ],
+      "notes": "A lighter final day designed around short transfers.",
+      "sources": []
+    }
+  ]
+}

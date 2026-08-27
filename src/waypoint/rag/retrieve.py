@@ -2,50 +2,56 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-from waypoint.rag.wikivoyage import wikivoyage_plaintext, wikivoyage_resolve_title
+from waypoint.cache_utils import cached_wikivoyage_text
 
 # Module-level cache for vectorizers (not picklable via st.cache_data)
 _RAG_CACHE: Dict[str, Dict[str, Any]] = {}
 
 
+def _hard_split(text: str, max_chars: int) -> List[str]:
+    pieces: List[str] = []
+    remaining = text.strip()
+    while len(remaining) > max_chars:
+        split_at = remaining.rfind(" ", 0, max_chars + 1)
+        if split_at < max_chars // 2:
+            split_at = max_chars
+        pieces.append(remaining[:split_at].strip())
+        remaining = remaining[split_at:].strip()
+    if remaining:
+        pieces.append(remaining)
+    return pieces
+
+
 def chunk_text(text: str, max_chars: int = 900, min_chars: int = 240) -> List[str]:
-    """Paragraph-aware chunking; avoid mid-sentence splits when possible."""
-    raw = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
-    if not raw:
-        # Fall back to sentence-ish splits
-        raw = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+    """Paragraph/sentence-aware chunks with a strict maximum and no dropped tail."""
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text or "") if p.strip()]
+    units: List[str] = []
+    for paragraph in paragraphs:
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", paragraph) if s.strip()]
+        for sentence in sentences or [paragraph]:
+            units.extend(_hard_split(sentence, max_chars))
 
     chunks: List[str] = []
-    buf = ""
-    for p in raw:
-        candidate = (buf + "\n\n" + p).strip() if buf else p
+    current = ""
+    for unit in units:
+        candidate = f"{current} {unit}".strip() if current else unit
         if len(candidate) <= max_chars:
-            buf = candidate
-            continue
-        if len(buf) >= min_chars:
-            chunks.append(buf)
-            buf = p
+            current = candidate
         else:
-            # buf too small — split long paragraph on sentences
-            sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", p) if s.strip()]
-            for s in sentences:
-                cand2 = (buf + " " + s).strip() if buf else s
-                if len(cand2) <= max_chars:
-                    buf = cand2
-                else:
-                    if buf:
-                        chunks.append(buf)
-                    buf = s
-    if buf and len(buf) >= min_chars:
-        chunks.append(buf)
-    elif buf and not chunks:
-        chunks.append(buf)
+            if current:
+                chunks.append(current)
+            current = unit
+    if current:
+        if chunks and len(current) < min_chars and len(chunks[-1]) + 1 + len(current) <= max_chars:
+            chunks[-1] = f"{chunks[-1]} {current}"
+        else:
+            chunks.append(current)
     return chunks
 
 
@@ -54,16 +60,12 @@ def get_city_rag_index(city: str, user_agent: str) -> Dict[str, Any]:
     if key in _RAG_CACHE:
         return _RAG_CACHE[key]
 
-    title = wikivoyage_resolve_title(city, user_agent=user_agent)
-    if not title:
-        _RAG_CACHE[key] = {"title": None, "chunks": [], "vectorizer": None, "X": None}
-        return _RAG_CACHE[key]
-
-    text = wikivoyage_plaintext(title, user_agent=user_agent)
+    article = cached_wikivoyage_text(city, user_agent)
+    title = article.get("title") or ""
+    text = article.get("text") or ""
     chunks = chunk_text(text) if text else []
-    if not chunks:
-        _RAG_CACHE[key] = {"title": title, "chunks": [], "vectorizer": None, "X": None}
-        return _RAG_CACHE[key]
+    if not title or not chunks:
+        return {"title": title or None, "chunks": [], "vectorizer": None, "X": None}
 
     vectorizer = TfidfVectorizer(stop_words="english", max_features=30000)
     X = vectorizer.fit_transform(chunks)
