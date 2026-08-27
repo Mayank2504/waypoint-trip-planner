@@ -49,6 +49,7 @@ streamlit run app.py
 - Every generated `poi_id` must appear in the fetched POI state.
 - Returned day count and ordered day numbers must match the request.
 - Duplicate POIs and invented RAG source IDs must be rejected.
+- Final generation and repair schemas must enumerate only IDs returned by tools; an invented POI ID must be replaced or rejected.
 - A failed generation must preserve the previous valid itinerary.
 - Whole-trip refinement can change multiple days.
 - Single-day regeneration must reject any mutation to another day or the city.

@@ -5,7 +5,7 @@ import pytest
 
 from waypoint.export.pdf import build_itinerary_pdf
 from waypoint.rag.retrieve import chunk_text
-from waypoint.schemas import Itinerary, parse_itinerary
+from waypoint.schemas import Itinerary, constrained_itinerary_schema, parse_itinerary
 
 
 def test_parse_itinerary():
@@ -63,6 +63,19 @@ def test_schema_rejects_nonsequential_days():
     }
     with pytest.raises(Exception):
         parse_itinerary(data)
+
+
+def test_constrained_schema_enumerates_only_tool_ids():
+    schema = constrained_itinerary_schema(["poi-b", "poi-a", "poi-a"], ["chunk-1"])
+    properties = schema["properties"]["days"]["items"]["properties"]
+    for block in ("morning", "afternoon", "evening"):
+        assert properties[block]["items"]["properties"]["poi_id"]["enum"] == [
+            "poi-a",
+            "poi-b",
+        ]
+    assert properties["sources"]["items"]["properties"]["chunk_id"]["enum"] == [
+        "chunk-1"
+    ]
 
 
 def test_chunk_respects_max():

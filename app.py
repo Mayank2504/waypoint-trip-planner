@@ -283,7 +283,14 @@ if generate_clicked:
             if status is not None:
                 status.write("Repairing itinerary JSON…")
             try:
-                raw = repair_itinerary_json(client, settings["model"], raw or "")
+                raw = repair_itinerary_json(
+                    client,
+                    settings["model"],
+                    raw or "",
+                    allowed_pois=allowed,
+                    allowed_chunks=tool_state.get("chunks") or {},
+                    expected_days=days,
+                )
                 itin = parse_and_validate(
                     raw,
                     allowed,
@@ -469,7 +476,14 @@ if itin and allowed:
                     )
                 except Exception as parse_err:
                     try:
-                        raw2 = repair_itinerary_json(client, settings["model"], raw2 or "")
+                        raw2 = repair_itinerary_json(
+                            client,
+                            settings["model"],
+                            raw2 or "",
+                            allowed_pois=merged,
+                            allowed_chunks=chunks2,
+                            expected_days=len(itin.get("days") or []),
+                        )
                         itin2 = parse_and_validate(
                             raw2,
                             merged,
@@ -550,7 +564,14 @@ if itin and allowed:
                         )
                     except Exception as parse_err:
                         try:
-                            raw3 = repair_itinerary_json(client, settings["model"], raw3 or "")
+                            raw3 = repair_itinerary_json(
+                                client,
+                                settings["model"],
+                                raw3 or "",
+                                allowed_pois=merged,
+                                allowed_chunks=chunks3,
+                                expected_days=len(itin.get("days") or []),
+                            )
                             itin3 = parse_and_validate(
                                 raw3,
                                 merged,

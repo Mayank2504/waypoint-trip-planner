@@ -40,7 +40,7 @@ All required capstone capabilities from `CAPSTONE_PLAN.md` are implemented:
 - [x] **Live POI search** — Nominatim geocoding with Open-Meteo/Photon fallbacks, bounded Overpass node/way/relation queries, interest mapping, caching, retries, mirror fallback, and structured POIs.
 - [x] **Wikivoyage RAG** — article retrieval, HTML cleanup, paragraph-aware chunks, TF-IDF indexing, cosine ranking, source IDs, caching, and graceful degradation.
 - [x] **Agent orchestration** — OpenAI Responses API, strict function schemas, multi-step tools, accumulated tool state, step/time limits, and execution traces.
-- [x] **Output guardrails** — strict Pydantic models, structured output, exact day checks, approved POI/source checks, duplicate detection, bounded repair, and preservation of the last valid plan.
+- [x] **Output guardrails** — per-run POI/source ID enums, strict Pydantic models, structured output, exact day checks, duplicate detection, bounded repair, and preservation of the last valid plan.
 - [x] **Streamlit experience** — destination, date, pace, interests, constraints, progress, day/block cards, JSON/PDF downloads, and state-safe reruns.
 - [x] **Interactive map** — PyDeck markers, tooltips, day filters, light/dark styles, filtered framing, temporal paths, OSRM geometry, and straight-line fallback.
 - [x] **Refinement** — whole-trip refinement, protected single-day regeneration, repeated changes, validation, persistence, and before/after comparison.
@@ -116,10 +116,11 @@ flowchart TD
 1. Streamlit validates the trip request and invokes the Responses API agent.
 2. The model must call `search_pois`; it may call `retrieve_guides` when RAG is enabled.
 3. Tool results accumulate in `tool_state`, giving the model only approved POI and source IDs.
-4. The final response is schema-validated against requested days, returned POIs, retrieved chunks, and regeneration invariants.
-5. A valid plan enters private session state. Failures never replace the previous valid itinerary.
-6. OSRM routes and Open-Meteo forecasts run as optional post-validation enrichments; their failure cannot remove the itinerary.
-7. The UI renders itinerary cards, routed/fallback paths, weather, trace, feedback controls, and JSON/PDF downloads.
+4. After tool execution, the final JSON schema dynamically restricts `poi_id` and source values to IDs returned during that run.
+5. The response is then validated against requested days, returned POIs, retrieved chunks, duplicate rules, and regeneration invariants.
+6. A valid plan enters private session state. Failures never replace the previous valid itinerary.
+7. OSRM routes and Open-Meteo forecasts run as optional post-validation enrichments; their failure cannot remove the itinerary.
+8. The UI renders itinerary cards, routed/fallback paths, weather, trace, feedback controls, and JSON/PDF downloads.
 
 ### Persistence and isolation
 

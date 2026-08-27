@@ -237,7 +237,57 @@ def test_retrieve_tool_accumulates_chunks(monkeypatch):
     assert state["chunks"]["c1"]["source"] == "Guide"
 
 
-def test_repair_itinerary_uses_json_schema():
+def test_repair_itinerary_uses_constrained_json_schema():
     client = SimpleNamespace(responses=Responses([response([], '{"title":"T"}')]))
-    assert loop.repair_itinerary_json(client, "gpt-4o-mini", "bad") == '{"title":"T"}'
-    assert client.responses.calls[0]["text"]["format"]["strict"] is True
+    assert loop.repair_itinerary_json(
+        client,
+        "gpt-4o-mini",
+        '{"poi_id":"invented"}',
+        allowed_pois={
+            "poi-1": {"name": "Museum", "category": "tourism:museum"}
+        },
+        allowed_chunks={"chunk-1": {"source": "Guide"}},
+        expected_days=3,
+    ) == '{"title":"T"}'
+    call = client.responses.calls[0]
+    assert call["text"]["format"]["strict"] is True
+    properties = call["text"]["format"]["schema"]["properties"]["days"]["items"][
+        "properties"
+    ]
+    assert properties["morning"]["items"]["properties"]["poi_id"]["enum"] == ["poi-1"]
+    assert properties["sources"]["items"]["properties"]["chunk_id"]["enum"] == [
+        "chunk-1"
+    ]
+    assert "exactly 3" in call["input"][0]["content"]
+
+
+def test_final_agent_schema_is_constrained_after_tool_result(monkeypatch):
+    tool_call = Item(
+        type="function_call",
+        name="search_pois",
+        arguments='{"city":"Paris","interests":[],"radius_km":5,"limit":10,"query":""}',
+        call_id="call-1",
+    )
+    client = SimpleNamespace(
+        responses=Responses([response([tool_call]), response([], "{}")])
+    )
+
+    def fake_call_tool(_name, _args, *, tool_state, **_kwargs):
+        tool_state["pois"]["approved-poi"] = {"name": "Approved"}
+        return '{"pois":[{"poi_id":"approved-poi"}]}'
+
+    monkeypatch.setattr(loop, "call_tool", fake_call_tool)
+    loop.run_trip_agent(
+        client,
+        model="gpt-4o-mini",
+        user_prompt="plan",
+        user_agent="ua",
+        max_steps=2,
+        rag_enabled=False,
+    )
+    schema = client.responses.calls[1]["text"]["format"]["schema"]
+    properties = schema["properties"]["days"]["items"]["properties"]
+    for block in ("morning", "afternoon", "evening"):
+        assert properties[block]["items"]["properties"]["poi_id"]["enum"] == [
+            "approved-poi"
+        ]

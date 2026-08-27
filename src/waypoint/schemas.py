@@ -1,7 +1,8 @@
 """Pydantic models for itineraries, POIs, and guide chunks."""
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from copy import deepcopy
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -140,6 +141,25 @@ ITINERARY_JSON_SCHEMA: Dict[str, Any] = {
         },
     },
 }
+
+
+def constrained_itinerary_schema(
+    poi_ids: Optional[List[str]] = None,
+    chunk_ids: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Return a per-run schema restricted to IDs actually returned by tools."""
+    schema = deepcopy(ITINERARY_JSON_SCHEMA)
+    day_properties = schema["properties"]["days"]["items"]["properties"]
+
+    approved_pois = sorted({poi_id for poi_id in (poi_ids or []) if poi_id})
+    if approved_pois:
+        for block in ("morning", "afternoon", "evening"):
+            day_properties[block]["items"]["properties"]["poi_id"]["enum"] = approved_pois
+
+    approved_chunks = sorted({chunk_id for chunk_id in (chunk_ids or []) if chunk_id})
+    if approved_chunks:
+        day_properties["sources"]["items"]["properties"]["chunk_id"]["enum"] = approved_chunks
+    return schema
 
 
 def parse_itinerary(data: Any) -> Itinerary:

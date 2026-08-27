@@ -9,7 +9,7 @@ from openai import OpenAI
 
 from waypoint.agent.schemas_openai import TOOLS
 from waypoint.agent.tools import tool_retrieve_guides, tool_search_pois
-from waypoint.schemas import ITINERARY_JSON_SCHEMA
+from waypoint.schemas import constrained_itinerary_schema
 
 
 TraceCallback = Callable[[Dict[str, Any]], None]
@@ -168,7 +168,10 @@ def run_trip_agent(
                     "type": "json_schema",
                     "name": "itinerary",
                     "strict": True,
-                    "schema": ITINERARY_JSON_SCHEMA,
+                    "schema": constrained_itinerary_schema(
+                        list(tool_state["pois"]),
+                        list(tool_state["chunks"]),
+                    ),
                 }
             },
         }
@@ -265,8 +268,31 @@ def run_trip_agent(
     )
 
 
-def repair_itinerary_json(client: OpenAI, model: str, raw: str) -> str:
-    """One extra call to coerce messy model text into itinerary JSON."""
+def repair_itinerary_json(
+    client: OpenAI,
+    model: str,
+    raw: str,
+    *,
+    allowed_pois: Optional[Dict[str, Any]] = None,
+    allowed_chunks: Optional[Dict[str, Any]] = None,
+    expected_days: Optional[int] = None,
+) -> str:
+    """Repair output while constraining references to tool-returned IDs."""
+    allowed_pois = allowed_pois or {}
+    allowed_chunks = allowed_chunks or {}
+    poi_catalog = "\n".join(
+        f"- {poi_id}: {poi.get('name', '')} ({poi.get('category', '')})"
+        for poi_id, poi in list(allowed_pois.items())[:60]
+    )
+    chunk_catalog = "\n".join(
+        f"- {chunk_id}: {chunk.get('source', '')}"
+        for chunk_id, chunk in list(allowed_chunks.items())[:20]
+    )
+    day_rule = (
+        f"The itinerary must contain exactly {expected_days} ordered day(s)."
+        if expected_days is not None
+        else ""
+    )
     resp = client.responses.create(
         model=model,
         store=False,
@@ -274,8 +300,13 @@ def repair_itinerary_json(client: OpenAI, model: str, raw: str) -> str:
             {
                 "role": "user",
                 "content": (
-                    "Convert the following into a single itinerary JSON object. "
-                    "Output JSON only, no markdown.\n\n" + (raw or "")[:12000]
+                    "Repair the following itinerary into one valid JSON object. "
+                    "Replace every unknown POI with the best unused POI from the approved list. "
+                    "Never invent an ID and do not repeat POIs. "
+                    f"{day_rule}\n\n"
+                    f"Approved POIs:\n{poi_catalog or '(none)'}\n\n"
+                    f"Approved guide chunks:\n{chunk_catalog or '(none; sources must be empty)'}\n\n"
+                    f"Original output:\n{(raw or '')[:12000]}"
                 ),
             }
         ],
@@ -284,7 +315,10 @@ def repair_itinerary_json(client: OpenAI, model: str, raw: str) -> str:
                 "type": "json_schema",
                 "name": "itinerary",
                 "strict": True,
-                "schema": ITINERARY_JSON_SCHEMA,
+                "schema": constrained_itinerary_schema(
+                    list(allowed_pois),
+                    list(allowed_chunks),
+                ),
             }
         },
     )
