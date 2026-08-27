@@ -3,9 +3,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-import requests
-
 from waypoint.config import NOMINATIM_URL, PLACEHOLDER_EMAILS
+from waypoint.http import request_json
 from waypoint.rate_limit import nominatim_limiter
 
 GITHUB_HOME = "https://github.com/Mayank2504/waypoint-trip-planner"
@@ -54,11 +53,15 @@ def _geocode_nominatim(city: str, user_agent: str, *, limit: int) -> List[Dict[s
     headers = _nominatim_headers(user_agent)
     params = {"q": city, "format": "json", "limit": max(1, min(limit, 5))}
     nominatim_limiter.wait()
-    r = requests.get(NOMINATIM_URL, params=params, headers=headers, timeout=20)
-    if r.status_code in (403, 429):
-        return []
-    r.raise_for_status()
-    data = r.json()
+    data = request_json(
+        "GET",
+        NOMINATIM_URL,
+        service="Nominatim",
+        params=params,
+        headers=headers,
+        timeout=(5, 20),
+        attempts=2,
+    )
     if not data:
         return []
     return [
@@ -73,14 +76,16 @@ def _geocode_nominatim(city: str, user_agent: str, *, limit: int) -> List[Dict[s
 
 def _geocode_open_meteo(city: str, user_agent: str, *, limit: int) -> List[Dict[str, Any]]:
     """Fallback: Open-Meteo geocoding (no OSM Nominatim User-Agent policy)."""
-    r = requests.get(
+    payload = request_json(
+        "GET",
         "https://geocoding-api.open-meteo.com/v1/search",
+        service="Open-Meteo geocoding",
         params={"name": city, "count": max(1, min(limit, 5)), "language": "en", "format": "json"},
         headers=_nominatim_headers(user_agent),
-        timeout=20,
+        timeout=(5, 20),
+        attempts=2,
     )
-    r.raise_for_status()
-    results = (r.json() or {}).get("results") or []
+    results = payload.get("results") or []
     out: List[Dict[str, Any]] = []
     for top in results:
         name = top.get("name") or city
@@ -93,14 +98,16 @@ def _geocode_open_meteo(city: str, user_agent: str, *, limit: int) -> List[Dict[
 
 def _geocode_photon(city: str, user_agent: str, *, limit: int) -> List[Dict[str, Any]]:
     """Fallback: Komoot Photon."""
-    r = requests.get(
+    payload = request_json(
+        "GET",
         "https://photon.komoot.io/api/",
+        service="Photon geocoding",
         params={"q": city, "limit": max(1, min(limit, 5))},
         headers=_nominatim_headers(user_agent),
-        timeout=20,
+        timeout=(5, 20),
+        attempts=2,
     )
-    r.raise_for_status()
-    features = (r.json() or {}).get("features") or []
+    features = payload.get("features") or []
     out: List[Dict[str, Any]] = []
     for feat in features:
         coords = (feat.get("geometry") or {}).get("coordinates") or []
@@ -120,9 +127,9 @@ def _geocode_photon(city: str, user_agent: str, *, limit: int) -> List[Dict[str,
 
 def check_nominatim(user_agent: str) -> Dict[str, Any]:
     try:
-        geo = geocode_city("Paris, France", user_agent)
-        if not geo:
-            return {"ok": False, "detail": "No geocode result (Nominatim may 403; fallbacks tried)"}
-        return {"ok": True, "detail": geo.get("display_name", "ok")}
+        results = _geocode_nominatim("Paris, France", user_agent, limit=1)
+        if not results:
+            return {"ok": False, "detail": "Nominatim returned no geocode result"}
+        return {"ok": True, "detail": results[0].get("display_name", "Nominatim ok")}
     except Exception as e:
         return {"ok": False, "detail": str(e)}

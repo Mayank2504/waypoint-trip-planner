@@ -52,7 +52,10 @@ def tool_retrieve_guides(
 ) -> Dict[str, Any]:
     if not enabled:
         return {"city": city, "hits": [], "note": "RAG disabled by user."}
-    hits = rag_retrieve(city=city, query=query, user_agent=user_agent, k=k)
+    try:
+        hits = rag_retrieve(city=city, query=query, user_agent=user_agent, k=k)
+    except Exception as exc:
+        return {"city": city, "hits": [], "note": f"RAG unavailable: {exc}"}
     return {
         "city": city,
         "hits": hits,

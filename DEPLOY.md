@@ -1,46 +1,32 @@
 # Deploy to Streamlit Community Cloud
 
-Waypoint is ready for Cloud deploy once the code is on a public GitHub repo.
+Waypoint is deployed at:
 
-## 1. Push to GitHub
+**https://waypoint-trip-planner-mayank.streamlit.app/**
 
-If `gh` is not authenticated on this machine:
+## Repository and deployment source
 
-```bash
-gh auth login -h github.com
-```
+- Repository: `Mayank2504/waypoint-trip-planner`
+- Branch: `main`
+- Main file: `app.py`
+- Python: 3.11
+- OpenAI: BYO-key only; no shared secret
 
-Then from the project root:
+## Connected deployment
 
-```bash
-git remote add origin https://github.com/<YOUR_USER>/waypoint-trip-planner.git
-git branch -M main
-git push -u origin main
-```
-
-Or create the repo in one step:
-
-```bash
-gh repo create waypoint-trip-planner --public --source=. --remote=origin --push
-```
-
-## 2. Create the Streamlit app
-
-1. Open [https://share.streamlit.io](https://share.streamlit.io) and sign in with GitHub.
-2. **New app** → select `waypoint-trip-planner` (or your repo name).
-3. Branch: `main`
-4. Main file path: `app.py`
-5. Deploy **without** putting an OpenAI key in Secrets (BYO-key in the sidebar).
+Streamlit watches `main` and redeploys after a push. New work must pass all local tests on a feature branch before merging to `main`.
 
 ## 3. Post-deploy smoke test
 
 1. Open the app URL in an incognito window.
 2. Paste your OpenAI key; set a real User-Agent email.
 3. Generate a 2-day itinerary (Fast mode on, RAG off).
-4. Confirm map, JSON download, and PDF download work.
+4. Confirm routed map, walking legs, weather, JSON, and PDF downloads.
+5. Open a second browser profile and confirm itinerary, votes, key, routes, and weather are not shared.
 
 ## Notes
 
-- Cloud filesystem is ephemeral — session state is the source of truth between reruns.
+- Cloud state is session-only; shared disk persistence is disabled.
 - Respect Nominatim’s 1 req/s policy; caching is enabled in the app.
+- Respect FOSSGIS OSRM’s 1 req/s policy and Open-Meteo’s non-commercial limits.
 - Do not commit `.streamlit/secrets.toml` or `.env`.

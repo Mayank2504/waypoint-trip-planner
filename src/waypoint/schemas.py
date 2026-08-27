@@ -1,22 +1,26 @@
 """Pydantic models for itineraries, POIs, and guide chunks."""
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-class BlockItem(BaseModel):
-    poi_id: str
+class StrictModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+
+class BlockItem(StrictModel):
+    poi_id: str = Field(min_length=1)
     why: str = ""
 
 
-class SourceRef(BaseModel):
+class SourceRef(StrictModel):
     chunk_id: str = ""
     source: str = ""
 
 
-class DayPlan(BaseModel):
+class DayPlan(StrictModel):
     day: int
     morning: List[BlockItem] = Field(default_factory=list)
     afternoon: List[BlockItem] = Field(default_factory=list)
@@ -32,28 +36,38 @@ class DayPlan(BaseModel):
         return v
 
 
-class Itinerary(BaseModel):
-    title: str
-    city: str
+class Itinerary(StrictModel):
+    title: str = Field(min_length=1)
+    city: str = Field(min_length=1)
     days: List[DayPlan] = Field(..., min_length=1)
+
+    @field_validator("days")
+    @classmethod
+    def _unique_ordered_days(cls, days: List[DayPlan]) -> List[DayPlan]:
+        numbers = [day.day for day in days]
+        if len(numbers) != len(set(numbers)):
+            raise ValueError("Day numbers must be unique.")
+        if numbers != list(range(1, len(numbers) + 1)):
+            raise ValueError("Day numbers must be ordered and start at 1.")
+        return days
 
     def to_dict(self) -> Dict[str, Any]:
         return self.model_dump()
 
 
-class POI(BaseModel):
-    poi_id: str
-    name: str
+class POI(StrictModel):
+    poi_id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
     category: str = "other"
     lat: float
     lon: float
     url: str = ""
 
 
-class GuideChunk(BaseModel):
-    chunk_id: str
-    source: str
-    text: str
+class GuideChunk(StrictModel):
+    chunk_id: str = Field(min_length=1)
+    source: str = Field(min_length=1)
+    text: str = Field(min_length=1)
     score: float = 0.0
 
 

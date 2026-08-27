@@ -82,6 +82,27 @@ def itinerary_paths(
     return out
 
 
+def routed_paths(
+    routes: Dict[int, Dict[str, Any]],
+    day_filter: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for day_number, route in sorted(routes.items()):
+        if day_filter is not None and int(day_number) != day_filter:
+            continue
+        geometry = route.get("geometry") or []
+        if len(geometry) < 2:
+            continue
+        out.append(
+            {
+                "day": int(day_number),
+                "path": geometry,
+                "color": DAY_COLORS[(int(day_number) - 1) % len(DAY_COLORS)],
+            }
+        )
+    return out
+
+
 def _approx_zoom(points: List[Dict[str, Any]]) -> int:
     lats = [p["lat"] for p in points]
     lons = [p["lon"] for p in points]
@@ -109,11 +130,9 @@ def render_map(
         st.info("No mappable POIs yet.")
         return
 
-    clat = center.get("lat")
-    clon = center.get("lon")
-    if clat is None or clon is None:
-        clat = float(np.mean([p["lat"] for p in points]))
-        clon = float(np.mean([p["lon"] for p in points]))
+    # Frame the currently displayed points (especially important for a day filter).
+    clat = float(np.mean([p["lat"] for p in points]))
+    clon = float(np.mean([p["lon"] for p in points]))
 
     zoom = _approx_zoom(points)
     view_state = pdk.ViewState(latitude=float(clat), longitude=float(clon), zoom=zoom, pitch=0)
@@ -150,5 +169,5 @@ def render_map(
         tooltip={"text": "{name}\nDay {day} • {block}\n{category}\n{poi_id}"},
         map_style=(MAP_STYLE_DARK if dark else MAP_STYLE_LIGHT),
     )
-    st.pydeck_chart(deck, use_container_width=True)
+    st.pydeck_chart(deck, width="stretch")
     st.caption("Map data © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors")

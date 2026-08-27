@@ -33,6 +33,38 @@ def test_schema_rejects_missing_days():
         parse_itinerary({"title": "X", "city": "Y"})
 
 
+def test_schema_rejects_extra_fields_and_blank_ids():
+    data = {
+        "title": "Trip",
+        "city": "City",
+        "days": [
+            {
+                "day": 1,
+                "morning": [{"poi_id": "", "why": ""}],
+                "afternoon": [],
+                "evening": [],
+                "notes": "",
+                "sources": [],
+                "unexpected": True,
+            }
+        ],
+    }
+    with pytest.raises(Exception):
+        parse_itinerary(data)
+
+
+def test_schema_rejects_nonsequential_days():
+    data = {
+        "title": "Trip",
+        "city": "City",
+        "days": [
+            {"day": 2, "morning": [], "afternoon": [], "evening": [], "notes": "", "sources": []}
+        ],
+    }
+    with pytest.raises(Exception):
+        parse_itinerary(data)
+
+
 def test_chunk_respects_max():
     paras = ["Sentence one. " * 20, "Sentence two. " * 20, "Sentence three. " * 20]
     text = "\n\n".join(paras)

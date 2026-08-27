@@ -37,18 +37,31 @@ try:
     ) -> Dict[str, Any]:
         try:
             return _cached_fetch_pois_ok(city, interests, radius_km, limit, user_agent)
-        except Exception:
-            from waypoint.osm.overpass import fetch_pois
-
-            return fetch_pois(city, interests, radius_km, limit, user_agent)
+        except Exception as exc:
+            return {
+                "city_key": city.strip().lower(),
+                "display_name": city,
+                "lat": None,
+                "lon": None,
+                "pois": [],
+                "error": str(exc),
+            }
 
     @st.cache_data(ttl=7 * 24 * 3600, show_spinner=False)
-    def cached_wikivoyage_text(city: str, user_agent: str) -> Dict[str, str]:
+    def _cached_wikivoyage_text_ok(city: str, user_agent: str) -> Dict[str, str]:
         from waypoint.rag.wikivoyage import wikivoyage_plaintext, wikivoyage_resolve_title
 
         title = wikivoyage_resolve_title(city, user_agent) or ""
         text = wikivoyage_plaintext(title, user_agent) if title else ""
+        if not title or not text:
+            raise RuntimeError("Wikivoyage returned no usable article.")
         return {"title": title, "text": text}
+
+    def cached_wikivoyage_text(city: str, user_agent: str) -> Dict[str, str]:
+        try:
+            return _cached_wikivoyage_text_ok(city, user_agent)
+        except Exception:
+            return {"title": "", "text": ""}
 
 except Exception:  # pragma: no cover - non-Streamlit contexts
     def cached_geocode(city: str, user_agent: str) -> Optional[Dict[str, Any]]:

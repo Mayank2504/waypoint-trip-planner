@@ -27,6 +27,11 @@ def render_trace() -> None:
             kind = ev.get("kind")
             if kind == "model_call":
                 st.markdown(f"**{ts}** model_call — step **{ev.get('step')}**")
+            elif kind == "model_result":
+                st.markdown(
+                    f"**{ts}** model_result — step **{ev.get('step')}** "
+                    f"in **{ev.get('elapsed_s')}s**"
+                )
             elif kind == "tool_call":
                 st.markdown(f"**{ts}** tool_call `{ev.get('name')}`")
                 st.code(json.dumps(ev.get("args", {}), indent=2), language="json")
@@ -41,3 +46,5 @@ def render_trace() -> None:
                 st.code(ev.get("error", ""))
             elif kind == "note":
                 st.markdown(f"**{ts}** {ev.get('message')}")
+            elif kind == "run_complete":
+                st.markdown(f"**{ts}** run complete in **{ev.get('elapsed_s')}s**")
