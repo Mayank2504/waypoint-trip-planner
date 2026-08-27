@@ -32,37 +32,100 @@
 | Enrichment | OSRM walking routes + date-aligned Open-Meteo forecasts |
 | Portfolio polish | PDF export, modular package layout, comprehensive pytest coverage |
 
+## Course requirement coverage
+
+All required capstone capabilities from `CAPSTONE_PLAN.md` are implemented:
+
+- [x] **Project and API setup** — modular Python 3.11 application, secure BYO OpenAI key input, identifying User-Agent, API health controls, and gitignored runtime state.
+- [x] **Live POI search** — Nominatim geocoding with Open-Meteo/Photon fallbacks, bounded Overpass node/way/relation queries, interest mapping, caching, retries, mirror fallback, and structured POIs.
+- [x] **Wikivoyage RAG** — article retrieval, HTML cleanup, paragraph-aware chunks, TF-IDF indexing, cosine ranking, source IDs, caching, and graceful degradation.
+- [x] **Agent orchestration** — OpenAI Responses API, strict function schemas, multi-step tools, accumulated tool state, step/time limits, and execution traces.
+- [x] **Output guardrails** — strict Pydantic models, structured output, exact day checks, approved POI/source checks, duplicate detection, bounded repair, and preservation of the last valid plan.
+- [x] **Streamlit experience** — destination, date, pace, interests, constraints, progress, day/block cards, JSON/PDF downloads, and state-safe reruns.
+- [x] **Interactive map** — PyDeck markers, tooltips, day filters, light/dark styles, filtered framing, temporal paths, OSRM geometry, and straight-line fallback.
+- [x] **Refinement** — whole-trip refinement, protected single-day regeneration, repeated changes, validation, persistence, and before/after comparison.
+- [x] **Feedback loop** — up/down votes, exact `+0.25`/`-0.35` boosts, destination scoping, statistics, local JSONL, and private Cloud-session feedback.
+- [x] **Reliability and performance** — bounded requests, exponential retries, provider fallbacks, Fast mode, non-blocking enrichments, actionable errors, and caches.
+- [x] **Deployment and portfolio** — public repository, live Streamlit app, architecture, screenshots, example output, test guide, and provider attribution.
+- [x] **Enhancements** — walking routes/times, weather forecasts, and Unicode-aware PDF export.
+
+Release verification:
+
+- **88 deterministic tests passing**
+- **5 low-volume live provider contracts passing**
+- **89% combined backend/UI coverage**
+- **Python 3.11 compile, dependency, lint, diff, and secret checks passing**
+
 ## Architecture
+
+![Waypoint AI Trip Planner architecture](AI-trip-planner-architecture-diagram.png)
+
+The editable diagram source is available in [`docs/architecture.mmd`](docs/architecture.mmd); the reproducible PNG renderer is [`docs/render_architecture.py`](docs/render_architecture.py).
+
+### Mermaid data-flow view
 
 ```mermaid
 flowchart TD
-  user[User_Streamlit_UI]
-  validate[Input_validation]
-  agent[Agent_loop_Responses_API]
-  osm[Nominatim_plus_Overpass]
-  rag[Wikivoyage_TFIDF]
-  route[OSRM_Walking_Routes]
-  weather[OpenMeteo_Forecast]
-  state[tool_state_pois_chunks]
-  schema[Pydantic_Itinerary]
-  guards[Validators]
-  persist[session_state_plus_json]
-  ui[Itinerary_Map_Votes]
-  pdf[PDF_export]
+  user["Traveler"]
+  streamlit["Streamlit UI"]
+  inputValidation["Input validation"]
+  agentLoop["OpenAI Responses agent loop"]
+  toolRouter["Strict tool dispatcher"]
+  geocoder["Nominatim geocoder"]
+  geocodeFallback["Open-Meteo and Photon fallbacks"]
+  overpass["Overpass POI search"]
+  wikivoyage["Wikivoyage article retrieval"]
+  tfidf["TF-IDF and cosine retrieval"]
+  toolState["Tool state: POIs, chunks, center"]
+  itinerarySchema["Structured Pydantic itinerary"]
+  semanticGuards["POI, source, day and regeneration guards"]
+  sessionState["Private Streamlit session state"]
+  localState["Atomic local JSON and JSONL"]
+  feedback["City-scoped feedback boosts"]
+  osrm["FOSSGIS OSRM walking routes"]
+  forecast["Open-Meteo daily forecast"]
+  map["PyDeck map and day filters"]
+  itineraryUI["Day and block itinerary UI"]
+  exports["JSON and PDF exports"]
+  trace["Execution trace and timings"]
 
-  user --> validate --> agent
-  agent -->|search_pois| osm
-  agent -->|retrieve_guides| rag
-  osm --> state
-  rag --> state
-  agent --> schema --> guards --> persist
-  persist --> ui
-  persist --> pdf
-  persist --> route
-  persist --> weather
-  route --> ui
-  weather --> ui
+  user --> streamlit --> inputValidation --> agentLoop
+  agentLoop --> toolRouter
+  toolRouter -->|"search_pois"| geocoder
+  geocoder -->|"403, 429 or empty"| geocodeFallback
+  geocoder --> overpass
+  geocodeFallback --> overpass
+  toolRouter -->|"retrieve_guides"| wikivoyage --> tfidf
+  overpass --> toolState
+  tfidf --> toolState
+  toolState --> agentLoop
+  agentLoop --> itinerarySchema --> semanticGuards --> sessionState
+
+  sessionState --> itineraryUI
+  sessionState --> osrm --> map
+  sessionState --> forecast --> itineraryUI
+  sessionState --> map
+  sessionState --> exports
+  sessionState --> trace
+  itineraryUI --> feedback -->|"ranking boost"| overpass
+  sessionState -->|"local runtime only"| localState
 ```
+
+### Runtime flow
+
+1. Streamlit validates the trip request and invokes the Responses API agent.
+2. The model must call `search_pois`; it may call `retrieve_guides` when RAG is enabled.
+3. Tool results accumulate in `tool_state`, giving the model only approved POI and source IDs.
+4. The final response is schema-validated against requested days, returned POIs, retrieved chunks, and regeneration invariants.
+5. A valid plan enters private session state. Failures never replace the previous valid itinerary.
+6. OSRM routes and Open-Meteo forecasts run as optional post-validation enrichments; their failure cannot remove the itinerary.
+7. The UI renders itinerary cards, routed/fallback paths, weather, trace, feedback controls, and JSON/PDF downloads.
+
+### Persistence and isolation
+
+- **Streamlit Cloud:** keys, itineraries, feedback, routes, and weather remain in the current browser session; shared filesystem persistence is disabled.
+- **Local development:** itinerary state is atomically saved to `data/app_state.json`; feedback appends to `data/feedback.jsonl`.
+- Secrets are never written to application state, and `.env`/Streamlit secret files are excluded from version control.
 
 ## Features
 
@@ -164,6 +227,14 @@ Keep OpenAI as BYO-key; do not add a shared API key to Streamlit Secrets.
 See [DEPLOY.md](DEPLOY.md) for more detail.
 
 On Cloud, itineraries, votes, routes, weather, and keys are session-only. Local development can use atomic disk autosave.
+
+## Operational constraints
+
+- Streamlit Cloud state is intentionally session-only to prevent one visitor from reading another visitor’s itinerary. Closing/restarting the session clears the trip and feedback.
+- Weather is an advisory display enrichment; it does not currently change the model’s selected POIs automatically.
+- Nominatim, Overpass, Wikivoyage, FOSSGIS OSRM, and Open-Meteo are public services without uptime guarantees. Each integration has bounded timeouts and a safe fallback.
+- Walking routes use the free FOSSGIS service for reasonable non-commercial use. A production/commercial deployment should use a contracted or self-hosted routing provider.
+- The public demo remains BYO-key so OpenAI usage and billing stay with the person generating the itinerary.
 
 ## Troubleshooting
 

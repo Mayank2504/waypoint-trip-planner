@@ -1,0 +1,64 @@
+flowchart TB
+  subgraph core [Core agent and validation flow]
+    direction LR
+    traveler["Traveler"]
+    streamlit["Streamlit UI and BYO key"]
+    inputValidation["Input validation and prompts"]
+    agentLoop["OpenAI Responses agent loop"]
+    strictTools["Strict tool dispatcher"]
+    toolState["Approved POIs, guide chunks, center"]
+    structuredOutput["Structured Pydantic itinerary"]
+    guardrails["Day, POI, source and regeneration guards"]
+    sessionState["Private session state"]
+    outputs["Itinerary, map, trace, feedback, JSON and PDF"]
+
+    traveler --> streamlit --> inputValidation --> agentLoop
+    agentLoop --> strictTools
+    strictTools --> toolState
+    toolState --> agentLoop
+    agentLoop --> structuredOutput --> guardrails --> sessionState --> outputs
+    guardrails -->|"actionable error"| streamlit
+  end
+
+  subgraph data [Agent tools and live data]
+    direction LR
+    geocode["Nominatim geocoding"]
+    geocodeFallback["Open-Meteo and Photon geocoding fallback"]
+    overpass["Overpass live POIs: nodes, ways, relations"]
+    wikivoyage["Wikivoyage guide"]
+    tfidf["TF-IDF and cosine retrieval"]
+
+    geocode --> overpass
+    geocode -->|"403, 429 or empty"| geocodeFallback --> overpass
+    wikivoyage --> tfidf
+  end
+
+  strictTools -->|"search_pois"| geocode
+  strictTools -->|"retrieve_guides"| wikivoyage
+  overpass --> toolState
+  tfidf --> toolState
+
+  subgraph enrichment [Optional post-validation enrichment]
+    direction LR
+    routeEnrichment["Walking route enrichment"]
+    osrm["FOSSGIS OSRM with straight-line fallback"]
+    weatherEnrichment["Date-aligned weather enrichment"]
+    forecast["Open-Meteo daily forecast"]
+
+    routeEnrichment <--> osrm
+    weatherEnrichment <--> forecast
+  end
+
+  sessionState --> routeEnrichment --> outputs
+  sessionState --> weatherEnrichment --> outputs
+
+  subgraph storage [Isolation and feedback]
+    direction LR
+    cloudState["Cloud: browser-session state only"]
+    localState["Local: atomic JSON and feedback JSONL"]
+    feedback["City-scoped up/down ranking boost"]
+  end
+
+  sessionState --> cloudState
+  sessionState -->|"local runtime only"| localState
+  outputs --> feedback --> overpass
