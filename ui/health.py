@@ -26,6 +26,18 @@ def render_health_panel(user_agent: str) -> None:
         result = results.get(service)
         if not result:
             continue
+        if service == "Overpass" and result.get("mirrors"):
+            mirrors = result["mirrors"]
+            healthy = sum(1 for mirror in mirrors if mirror["ok"])
+            if healthy:
+                st.success(f"Overpass: {healthy}/{len(mirrors)} mirrors available")
+            else:
+                st.error("Overpass: no configured mirror is currently available")
+            with st.expander("Overpass mirror details", expanded=False):
+                for mirror in mirrors:
+                    state = "available" if mirror["ok"] else "unavailable"
+                    st.caption(f"{mirror['host']}: {state} — {mirror['detail']}")
+            continue
         if result["ok"]:
             st.success(f"{service}: {result['detail']}")
         elif service == "Wikivoyage":

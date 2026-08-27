@@ -28,5 +28,6 @@ Streamlit watches `main` and redeploys after a push. New work must pass all loca
 
 - Cloud state is session-only; shared disk persistence is disabled.
 - Respect Nominatim’s 1 req/s policy; caching is enabled in the app.
+- Overpass uses global `lz4`, OSMF, and Private.coffee mirrors with bounded failover; the sidebar reports each mirror independently.
 - Respect FOSSGIS OSRM’s 1 req/s policy and Open-Meteo’s non-commercial limits.
 - Do not commit `.streamlit/secrets.toml` or `.env`.

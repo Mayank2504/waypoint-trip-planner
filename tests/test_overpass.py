@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from waypoint.osm import overpass
+from waypoint.config import OVERPASS_URLS
 
 
 def test_query_covers_all_osm_element_types_and_radius():
@@ -98,12 +99,34 @@ def test_post_overpass_falls_back_between_hosts(monkeypatch):
     assert calls["count"] == 2
 
 
+def test_empty_success_does_not_try_other_mirrors(monkeypatch):
+    calls = {"count": 0}
+
+    def empty_success(*_args, **_kwargs):
+        calls["count"] += 1
+        return {"elements": []}
+
+    monkeypatch.setattr(overpass, "request_json", empty_success)
+    pois, error = overpass._post_overpass("query", {"User-Agent": "ua"})
+    assert pois == []
+    assert error is None
+    assert calls["count"] == 1
+
+
 def test_check_overpass_reports_success_and_failure(monkeypatch):
     monkeypatch.setattr(overpass, "request_json", lambda *_args, **_kwargs: {})
-    assert overpass.check_overpass("ua")["ok"]
+    healthy = overpass.check_overpass("ua")
+    assert healthy["ok"]
+    assert len(healthy["mirrors"]) == len(OVERPASS_URLS)
     monkeypatch.setattr(
         overpass,
         "request_json",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("offline")),
     )
     assert not overpass.check_overpass("ua")["ok"]
+
+
+def test_mirror_list_is_global_and_excludes_retired_endpoints():
+    assert OVERPASS_URLS[0].startswith("https://lz4.overpass-api.de")
+    assert all("kumi.systems" not in host for host in OVERPASS_URLS)
+    assert all("overpass.osm.ch" not in host for host in OVERPASS_URLS)

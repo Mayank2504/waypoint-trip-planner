@@ -185,7 +185,7 @@ The release suite currently contains 88 deterministic tests and enforces at leas
 | --- | --- | --- |
 | OpenAI | Yes (BYO) | Default model `gpt-4.1-mini`. Typical plan ≈ $0.01–0.05. Set a usage cap. |
 | Nominatim | No | [Usage policy](https://operations.osmfoundation.org/policies/nominatim/): 1 req/s, identifying User-Agent, cache results |
-| Overpass | No | Retries + fallback hosts; backoff on 429 |
+| Overpass | No | Global `lz4`, primary OSMF, and Private.coffee mirrors; bounded failover on timeout/429/5xx |
 | Wikivoyage | No | May 403 without a proper User-Agent — leave RAG off |
 | FOSSGIS OSRM | No | Walking routes; non-commercial reasonable use; maximum 1 request/second |
 | Open-Meteo | No | Forecasts; free non-commercial limit 10,000 calls/day; attribution required |
@@ -233,6 +233,7 @@ On Cloud, itineraries, votes, routes, weather, and keys are session-only. Local 
 - Streamlit Cloud state is intentionally session-only to prevent one visitor from reading another visitor’s itinerary. Closing/restarting the session clears the trip and feedback.
 - Weather is an advisory display enrichment; it does not currently change the model’s selected POIs automatically.
 - Nominatim, Overpass, Wikivoyage, FOSSGIS OSRM, and Open-Meteo are public services without uptime guarantees. Each integration has bounded timeouts and a safe fallback.
+- Overpass treats an HTTP 200 response with zero matches as valid data instead of retrying every mirror. Mirror health is shown separately in the sidebar.
 - Walking routes use the free FOSSGIS service for reasonable non-commercial use. A production/commercial deployment should use a contracted or self-hosted routing provider.
 - The public demo remains BYO-key so OpenAI usage and billing stay with the person generating the itinerary.
 
@@ -241,7 +242,7 @@ On Cloud, itineraries, votes, routes, weather, and keys are session-only. Local 
 | Symptom | Fix |
 | --- | --- |
 | Nominatim / Wikivoyage 403 | Set a real User-Agent email; wait if rate-limited |
-| Overpass timeout | Retry; Fast mode; smaller radius |
+| Overpass timeout | Check mirror details; retry later or use Fast mode. Smaller radii reduce public-server load. |
 | Empty itinerary / unknown `poi_id` | Check execution trace; raise max steps |
 | Map filter clears UI | Fixed: itinerary renders from session state outside the Generate button |
 | PDF looks wrong for CJK names | Add `assets/fonts/DejaVuSans.ttf` or rely on system Unicode fonts |

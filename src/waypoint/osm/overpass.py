@@ -89,14 +89,13 @@ def _post_overpass(
                 service="Overpass",
                 data={"data": q},
                 headers=headers,
-                timeout=(5, 20),
-                attempts=2,
+                timeout=(4, 12),
+                attempts=1,
                 deadline=deadline,
             )
             pois = _parse_elements(data.get("elements", []) or [], 80)
-            if pois:
-                return pois, None
-            last_err = f"{host} returned 0 POIs"
+            # HTTP 200 with zero matches is valid data, not a mirror failure.
+            return pois, None
         except Exception as e:
             last_err = f"{host}: {e}"
             continue
@@ -149,8 +148,10 @@ def fetch_pois(
 
     for key, value in tag_filters.items():
         added = 0
-        # Small per-element queries are substantially more reliable than one large union.
-        for element_type in ("node", "way", "relation"):
+        # Query common nodes first; only query area-like ways/relations if needed.
+        for element_types in (("node",), ("way", "relation")):
+            if time.monotonic() >= deadline:
+                break
             q = _overpass_query_one(
                 lat,
                 lon,
@@ -158,11 +159,13 @@ def fetch_pois(
                 key,
                 value,
                 per_key_limit - added,
-                (element_type,),
+                element_types,
             )
             chunk, err = _post_overpass(q, headers, deadline=deadline)
             if err:
                 last_err = err
+            else:
+                last_err = None
             for p in chunk:
                 if p["poi_id"] in seen:
                     continue
@@ -171,7 +174,7 @@ def fetch_pois(
                 added += 1
                 if added >= per_key_limit:
                     break
-            if added >= per_key_limit or time.monotonic() >= deadline:
+            if added >= per_key_limit:
                 break
 
     if not merged:
@@ -201,19 +204,30 @@ def check_overpass(user_agent: str) -> Dict[str, Any]:
         "User-Agent": user_agent or "WaypointTripPlanner/1.0 (+https://github.com/Mayank2504/waypoint-trip-planner)",
         "Accept": "*/*",
     }
-    last = ""
-    for host in OVERPASS_URLS[:2]:
+    mirrors: List[Dict[str, Any]] = []
+    for host in OVERPASS_URLS:
+        label = host.split("/")[2]
         try:
-            request_json(
+            data = request_json(
                 "POST",
                 host,
                 service="Overpass",
                 data={"data": q},
                 headers=headers,
-                timeout=(5, 20),
+                timeout=(3, 8),
                 attempts=1,
             )
-            return {"ok": True, "detail": f"{host} ok"}
+            mirrors.append(
+                {
+                    "host": label,
+                    "ok": True,
+                    "detail": f"ok ({len(data.get('elements') or [])} result(s))",
+                }
+            )
         except Exception as e:
-            last = str(e)
-    return {"ok": False, "detail": last or "Overpass failed"}
+            mirrors.append({"host": label, "ok": False, "detail": str(e)})
+    healthy = [mirror for mirror in mirrors if mirror["ok"]]
+    detail = "; ".join(
+        f"{mirror['host']}: {mirror['detail']}" for mirror in mirrors
+    )
+    return {"ok": bool(healthy), "detail": detail, "mirrors": mirrors}

@@ -61,6 +61,8 @@ streamlit run app.py
 - Walking leg totals match the route summary.
 - Disable routing and confirm straight-line paths.
 - Simulate or disconnect OSRM and confirm the itinerary still renders with fallback paths.
+- Confirm Overpass mirror health reports each global endpoint separately.
+- Confirm a valid empty Overpass response returns “no matches” without exhausting the operation deadline.
 
 ### Weather
 

@@ -12,9 +12,9 @@ FONTS_DIR = ASSETS_DIR / "fonts"
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 OVERPASS_URLS = [
+    "https://lz4.overpass-api.de/api/interpreter",
     "https://overpass-api.de/api/interpreter",
-    "https://overpass.kumi.systems/api/interpreter",
-    "https://overpass.osm.ch/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
 ]
 WIKIVOYAGE_API = "https://en.wikivoyage.org/w/api.php"
 
