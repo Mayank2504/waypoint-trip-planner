@@ -72,11 +72,12 @@ def render_sidebar() -> Dict[str, Any]:
         show_trace = st.checkbox("Show execution trace", value=True, key="show_trace")
         model = st.text_input("Model", value=DEFAULT_MODEL, key="model_name")
         default_steps = MAX_TOOL_STEPS_FAST if fast_mode else MAX_TOOL_STEPS_FULL
+        if "max_steps" not in st.session_state:
+            st.session_state["max_steps"] = default_steps
         max_steps = st.slider(
             "Max tool steps",
             min_value=3,
             max_value=12,
-            value=default_steps,
             key="max_steps",
         )
 
@@ -88,7 +89,7 @@ def render_sidebar() -> Dict[str, Any]:
             help="Used in User-Agent for Nominatim + Wikivoyage. Use a real email.",
         )
         if user_agent_email.strip().lower() in PLACEHOLDER_EMAILS:
-            st.warning("Set a real email to reduce 403 blocks from public APIs.")
+            st.info("Using the project GitHub URL as User-Agent until you enter a real email.")
         user_agent = build_user_agent(user_agent_email)
 
         st.subheader("Map")

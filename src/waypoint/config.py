@@ -14,7 +14,7 @@ NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 OVERPASS_URLS = [
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
-    "https://lz4.overpass-api.de/api/interpreter",
+    "https://overpass.osm.ch/api/interpreter",
 ]
 WIKIVOYAGE_API = "https://en.wikivoyage.org/w/api.php"
 

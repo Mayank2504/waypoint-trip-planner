@@ -11,20 +11,14 @@ from waypoint.osm.geocode import geocode_city
 from waypoint.osm.tags import tags_for_interests
 
 
-def _overpass_query(lat: float, lon: float, radius_m: int, tag_filters: Dict[str, str]) -> str:
-    parts: List[str] = []
-    for k, v in tag_filters.items():
-        parts.append(f'node(around:{radius_m},{lat},{lon})["{k}"~"{v}"];')
-        parts.append(f'way(around:{radius_m},{lat},{lon})["{k}"~"{v}"];')
-        parts.append(f'relation(around:{radius_m},{lat},{lon})["{k}"~"{v}"];')
-    body = "\n".join(parts)
-    return f"""
-[out:json][timeout:35];
-(
-{body}
-);
-out center tags;
-"""
+def _overpass_query_one(lat: float, lon: float, radius_m: int, key: str, value: str) -> str:
+    """One small node query. Combined regex unions often 504/406 on public Overpass."""
+    radius_m = int(min(max(radius_m, 500), 8000))
+    return (
+        f'[out:json][timeout:15];'
+        f'node(around:{radius_m},{lat},{lon})["{key}"~"{value}"]["name"];'
+        f'out center 40;'
+    )
 
 
 def category_from_tags(tags: Dict[str, str]) -> str:
@@ -68,6 +62,27 @@ def _parse_elements(elements: List[Dict[str, Any]], limit: int) -> List[Dict[str
     return out
 
 
+def _post_overpass(q: str, headers: Dict[str, str]) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    last_err: Optional[str] = None
+    for host in OVERPASS_URLS:
+        try:
+            r = requests.post(host, data={"data": q}, headers=headers, timeout=20)
+            if r.status_code in (403, 406, 429) or r.status_code >= 500:
+                last_err = f"{host} HTTP {r.status_code}"
+                time.sleep(0.4)
+                continue
+            r.raise_for_status()
+            data = r.json()
+            pois = _parse_elements(data.get("elements", []) or [], 80)
+            if pois:
+                return pois, None
+            last_err = f"{host} returned 0 POIs"
+        except Exception as e:
+            last_err = f"{host}: {e}"
+            continue
+    return [], last_err
+
+
 def fetch_pois(
     city: str,
     interests: Tuple[str, ...],
@@ -75,13 +90,7 @@ def fetch_pois(
     limit: int,
     user_agent: str,
 ) -> Dict[str, Any]:
-    # Prefer cached geocode when Streamlit is available
-    try:
-        from waypoint.cache_utils import cached_geocode
-
-        geo = cached_geocode(city, user_agent)
-    except Exception:
-        geo = geocode_city(city, user_agent=user_agent)
+    geo = geocode_city(city, user_agent=user_agent)
     if not geo:
         return {
             "city_key": city.strip().lower(),
@@ -89,63 +98,70 @@ def fetch_pois(
             "lat": None,
             "lon": None,
             "pois": [],
-            "error": "No geocode result. Try 'City, Country'.",
+            "error": (
+                "Could not geocode this city (Nominatim often returns 403). "
+                "Try 'City, Country' and a real User-Agent email."
+            ),
         }
 
     lat, lon = geo["lat"], geo["lon"]
     display_name = geo["display_name"]
     city_key = display_name.strip().lower()
     tag_filters = tags_for_interests(list(interests))
-    radius_m = int(max(500, radius_km * 1000))
-    q = _overpass_query(lat, lon, radius_m, tag_filters)
+    radius_m = int(max(500, min(radius_km, 8) * 1000))
 
-    headers = {"User-Agent": user_agent or "waypoint-trip-planner/1.0 (contact: unknown)"}
-    last_err: Optional[Exception] = None
+    headers = {
+        "User-Agent": user_agent or "WaypointTripPlanner/1.0 (+https://github.com/Mayank2504/waypoint-trip-planner)",
+        "Accept": "*/*",
+    }
 
-    for host in OVERPASS_URLS:
-        for attempt in range(3):
-            try:
-                r = requests.post(host, data={"data": q}, headers=headers, timeout=30)
-                if r.status_code == 429:
-                    time.sleep(1.5 * (2**attempt))
-                    continue
-                if r.status_code >= 500:
-                    time.sleep(1.0 * (2**attempt))
-                    continue
-                r.raise_for_status()
-                data = r.json()
-                pois = _parse_elements(data.get("elements", []) or [], limit)
-                return {
-                    "city_key": city_key,
-                    "display_name": display_name,
-                    "lat": lat,
-                    "lon": lon,
-                    "pois": pois,
-                    "error": "" if pois else "No POIs matched interests in this radius.",
-                }
-            except Exception as e:
-                last_err = e
-                time.sleep(1.0 * (2**attempt))
-        # try next host
+    merged: List[Dict[str, Any]] = []
+    seen = set()
+    last_err: Optional[str] = None
+    per_key_limit = max(8, int(limit))
+
+    for key, value in tag_filters.items():
+        q = _overpass_query_one(lat, lon, radius_m, key, value)
+        chunk, err = _post_overpass(q, headers)
+        if err:
+            last_err = err
+        for p in chunk:
+            if p["poi_id"] in seen:
+                continue
+            seen.add(p["poi_id"])
+            merged.append(p)
+            if len(merged) >= per_key_limit:
+                break
+        if len(merged) >= per_key_limit:
+            break
+
+    if not merged:
+        return {
+            "city_key": city_key,
+            "display_name": display_name,
+            "lat": lat,
+            "lon": lon,
+            "pois": [],
+            "error": last_err or "No POIs matched interests in this radius.",
+        }
 
     return {
         "city_key": city_key,
         "display_name": display_name,
         "lat": lat,
         "lon": lon,
-        "pois": [],
-        "error": str(last_err) if last_err else "Overpass unavailable",
+        "pois": merged[: max(1, min(limit, 200))],
+        "error": "",
     }
 
 
 def check_overpass(user_agent: str) -> Dict[str, Any]:
     """Tiny Overpass query around a known point (Eiffel Tower area)."""
-    q = """
-[out:json][timeout:15];
-node(around:200,48.8584,2.2945)["tourism"="attraction"];
-out center tags 3;
-"""
-    headers = {"User-Agent": user_agent or "waypoint-trip-planner/1.0 (contact: unknown)"}
+    q = '[out:json][timeout:15];node(around:200,48.8584,2.2945)["tourism"="attraction"];out center 3;'
+    headers = {
+        "User-Agent": user_agent or "WaypointTripPlanner/1.0 (+https://github.com/Mayank2504/waypoint-trip-planner)",
+        "Accept": "*/*",
+    }
     last = ""
     for host in OVERPASS_URLS[:2]:
         try:

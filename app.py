@@ -22,7 +22,7 @@ from ui.itinerary import render_before_after, render_itinerary
 from ui.map import itinerary_paths, itinerary_points, render_map
 from ui.sidebar import render_sidebar
 from ui.trace import append_trace, render_trace, reset_trace
-from waypoint.agent.loop import run_trip_agent
+from waypoint.agent.loop import repair_itinerary_json, run_trip_agent
 from waypoint.agent.prompts import plan_prompt, refine_prompt, regen_day_prompt
 from waypoint.config import APP_NAME, POI_LIMIT_FAST, POI_LIMIT_FULL
 from waypoint.export.pdf import build_itinerary_pdf
@@ -64,6 +64,23 @@ def get_openai_client() -> OpenAI:
         st.error("Enter your OpenAI API key in the sidebar.")
         st.stop()
     return OpenAI(api_key=key)
+
+
+def explain_agent_error(error: Exception) -> str:
+    message = str(error)
+    lowered = message.lower()
+    if "connection" in lowered or "timed out" in lowered:
+        return (
+            "Could not reach the OpenAI API. Check your internet connection, VPN, "
+            "proxy, or corporate firewall, then retry."
+        )
+    if "401" in lowered or "authentication" in lowered or "api key" in lowered:
+        return "OpenAI rejected the API key. Clear it in the sidebar and enter a valid key."
+    if "429" in lowered or "quota" in lowered or "billing" in lowered:
+        return "OpenAI quota or billing limit reached. Check billing and usage limits."
+    if "model" in lowered and ("not found" in lowered or "access" in lowered):
+        return "This API key cannot access the selected model. Try `gpt-4o-mini`."
+    return message
 
 
 def maybe_clear_key() -> None:
@@ -151,6 +168,8 @@ if generate_clicked:
 
     reset_trace()
     client = get_openai_client()
+    raw = ""
+    tool_state: dict = {}
     fast_mode = settings["fast_mode"]
     poi_limit = POI_LIMIT_FAST if fast_mode else POI_LIMIT_FULL
     prompt = plan_prompt(
@@ -184,7 +203,7 @@ if generate_clicked:
                 on_status=_status,
             )
     except Exception as e:
-        st.error(f"Agent failed: {e}")
+        st.error(f"Agent failed: {explain_agent_error(e)}")
         maybe_clear_key()
         if settings["show_trace"]:
             render_trace()
@@ -199,7 +218,26 @@ if generate_clicked:
 
     try:
         allowed = dict(tool_state.get("pois", {}))
-        itin = parse_and_validate(raw, allowed)
+        if not allowed:
+            extra = tool_state.get("last_search_error") or "search_pois returned no places"
+            st.error(
+                f"Could not build a plan because no POIs were found. {extra} "
+                "Set a real User-Agent email, try a well-known city (e.g. Santa Fe, NM), "
+                "or widen the radius."
+            )
+            with st.expander("Raw model output"):
+                st.code(raw or "(empty)")
+            st.stop()
+        try:
+            itin = parse_and_validate(raw, allowed)
+        except Exception as parse_err:
+            if status is not None:
+                status.write("Repairing itinerary JSON…")
+            try:
+                raw = repair_itinerary_json(client, settings["model"], raw or "")
+                itin = parse_and_validate(raw, allowed)
+            except Exception:
+                raise parse_err
         dups = find_duplicate_poi_ids(itin)
         if dups:
             st.warning(f"Duplicate POIs in itinerary (allowed, but less ideal): {dups}")
@@ -208,7 +246,7 @@ if generate_clicked:
     except Exception as e:
         st.error(f"Could not parse/validate itinerary: {e}")
         with st.expander("Raw model output"):
-            st.code(raw)
+            st.code(raw if raw else "(empty)")
 
 # ---- Always render saved itinerary (outside button handler) ----
 itin = st.session_state.get("itinerary")

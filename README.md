@@ -2,7 +2,7 @@
 
 **Waypoint** is a production-style Streamlit app that plans multi-day city itineraries with an OpenAI **Responses API** agent, live **OpenStreetMap** points of interest, optional **Wikivoyage RAG**, an interactive **PyDeck** map, a city-scoped feedback loop, and **PDF/JSON export**.
 
-**Repo:** [mayank-info/waypoint-trip-planner](https://github.com/mayank-info/waypoint-trip-planner)
+**Repo:** [Mayank2504/waypoint-trip-planner](https://github.com/Mayank2504/waypoint-trip-planner)
 
 > Bring your own OpenAI API key. No keys are required for Nominatim, Overpass, or Wikivoyage.
 
@@ -115,10 +115,10 @@ PYTHONPATH=src pytest -q
 
 ## Deploy (Streamlit Community Cloud)
 
-**GitHub:** https://github.com/mayank-info/waypoint-trip-planner
+**GitHub:** https://github.com/Mayank2504/waypoint-trip-planner
 
 1. Go to [share.streamlit.io](https://share.streamlit.io) → **New app**.
-2. Select repo `mayank-info/waypoint-trip-planner`, branch `main`, main file `app.py`.
+2. Select repo `Mayank2504/waypoint-trip-planner`, branch `main`, main file `app.py`.
 3. Deploy **without** putting an OpenAI key in Secrets (BYO-key in the sidebar).
 4. Smoke-test in an incognito window: paste key, generate a 2-day plan, download PDF.
 

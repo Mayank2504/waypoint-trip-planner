@@ -14,7 +14,7 @@ INTEREST_TO_TAGS: Dict[str, List[TagPair]] = {
     "museums": [("tourism", "museum|gallery")],
     "food": [("amenity", "restaurant|cafe|fast_food")],
     "coffee": [("amenity", "cafe")],
-    "history": [("historic", ".+"), ("tourism", "attraction")],
+    "history": [("historic", "monument|memorial|castle|ruins"), ("tourism", "attraction")],
     "art": [("tourism", "gallery|museum")],
     "nightlife": [("amenity", "bar|pub|nightclub")],
     "scenic": [("tourism", "viewpoint"), ("natural", "peak")],
@@ -26,7 +26,7 @@ DEFAULT_TAGS: List[TagPair] = [
     ("tourism", "museum|attraction|viewpoint"),
     ("leisure", "park|garden|nature_reserve"),
     ("amenity", "cafe|restaurant"),
-    ("historic", ".+"),
+    ("historic", "monument|memorial|castle"),
 ]
 
 ALL_INTERESTS = list(INTEREST_TO_TAGS.keys())

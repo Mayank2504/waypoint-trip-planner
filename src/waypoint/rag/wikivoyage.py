@@ -10,7 +10,7 @@ from waypoint.config import WIKIVOYAGE_API
 
 
 def wikimedia_headers(user_agent: str) -> Dict[str, str]:
-    ua = (user_agent or "").strip() or "waypoint-trip-planner/1.0 (contact: unknown)"
+    ua = (user_agent or "").strip() or "WaypointTripPlanner/1.0 (+https://github.com/Mayank2504/waypoint-trip-planner)"
     return {"User-Agent": ua, "Accept": "application/json"}
 
 
