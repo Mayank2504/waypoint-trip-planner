@@ -20,7 +20,14 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from ui.itinerary import render_before_after, render_itinerary
-from ui.map import itinerary_paths, itinerary_points, render_map, routed_paths
+from ui.map import itinerary_paths, itinerary_points, render_map
+
+try:
+    # A stale Streamlit module cache can briefly expose the previous ui.map during deploy.
+    from ui.map import routed_paths
+except ImportError:
+    def routed_paths(_routes, _day_filter=None):
+        return []
 from ui.sidebar import render_sidebar
 from ui.trace import append_trace, render_trace, reset_trace
 from waypoint.agent.loop import repair_itinerary_json, run_trip_agent
